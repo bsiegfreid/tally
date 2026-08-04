@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="60">
+<title>Tally</title>
+<style>
+{{style}}
+</style>
+</head>
+<body>
+<h1>Tally</h1>
+<h2>Daily, last 14 days (UTC)</h2>
+<table>
+<tr><th>Day</th><th>Kind</th><th>Runs</th><th>Failed</th>
+<th>Avg time</th></tr>
+{{daily}}
+</table>
+<h2>Recent runs</h2>
+<table>
+<tr><th>Received (UTC)</th><th>Kind</th><th>Host</th><th>Time</th>
+<th>Detail</th></tr>
+{{recent}}
+</table>
+</body>
+</html>
