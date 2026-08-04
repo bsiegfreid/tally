@@ -26,8 +26,28 @@ const SCHEMA: &str = "
 /// Rows in the recent-runs table on the index page.
 const RECENT_LIMIT: i64 = 20;
 
+/// Everything a handler may ask of the database, as one closed set.
+///
+/// A Rust enum is a sum type: each variant is a different shape of
+/// data, and a value is exactly one of them. Where an OO language
+/// would model this as a `Command` interface with a class per
+/// operation and dynamic dispatch, here the set of operations is
+/// closed and the `match` in the mapper thread must handle every
+/// variant — add one and the compiler flags each place that forgot
+/// it. New capability, in either direction, is a compile error until
+/// it is handled everywhere. The trade: OO makes adding operations
+/// easy and changing handlers hard; a sum type makes the operations
+/// visible in one place and lets the compiler drive the change.
+///
+/// Note `Report` carrying its own `reply` channel: the request and
+/// the way home travel together, so the mapper thread never has to
+/// know who is asking.
 pub enum Command {
+    /// Insert one run. Fire-and-forget: no reply, failures are
+    /// logged by the mapper thread.
     Record(NewRun),
+    /// Fetch the aggregated report. The result — success or error —
+    /// comes back on `reply`.
     Report {
         days: u32,
         reply: oneshot::Sender<rusqlite::Result<Report>>,
@@ -35,8 +55,23 @@ pub enum Command {
 }
 
 /// Open the database, apply the schema, and hand the connection to a
-/// dedicated thread. The returned sender is the door. Panics if the
-/// database cannot be opened — there is nothing to serve without it.
+/// dedicated thread.
+///
+/// Parameters
+/// - `db_path`: path to the SQLite file, created if missing. Any
+///   path rusqlite accepts works, including `:memory:`, which is
+///   what the tests use.
+///
+/// Returns the transmit half of the command channel — the only way
+/// to reach the database. Clone it freely; every worker holds one.
+/// The receive half is moved into the thread and is unreachable
+/// from outside. When the last sender drops, `blocking_recv`
+/// returns `None`, the loop ends, the thread exits, and the
+/// connection closes: channel closure is the shutdown protocol,
+/// and there is no other.
+///
+/// Panics if the database cannot be opened or the schema cannot be
+/// applied — there is nothing to serve without it.
 pub fn spawn(db_path: &str) -> mpsc::UnboundedSender<Command> {
     // Deliberate panic, and the only two in the binary. `expect` is
     // acceptable here because this runs at startup, before the
@@ -50,6 +85,13 @@ pub fn spawn(db_path: &str) -> mpsc::UnboundedSender<Command> {
     // Mutex is ever needed: instead of many threads sharing the
     // handle, one thread owns it and the others send messages. This
     // is Rust's ownership model used as a concurrency design.
+    //
+    // `mpsc` = multi-producer, single-consumer: the `Sender` clones
+    // freely (one per worker), the lone `Receiver` lives here. The
+    // unbounded variant means `send` never waits, which is the right
+    // trade for tiny, sporadic inserts; under sustained load a
+    // bounded channel would add backpressure instead of letting the
+    // queue grow without limit.
     let (tx, mut rx) = mpsc::unbounded_channel();
     std::thread::spawn(move || {
         // A plain OS thread drains the async channel with

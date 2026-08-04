@@ -11,7 +11,7 @@ use crate::format::Format;
 use crate::mapper::Command;
 use crate::model::{NewRun, Report};
 
-type Door = web::Data<mpsc::UnboundedSender<Command>>;
+type Mapper = web::Data<mpsc::UnboundedSender<Command>>;
 
 /// Window shown by the daily trends table.
 const REPORT_DAYS: u32 = 14;
@@ -20,7 +20,15 @@ const MAX_HOST_LEN: usize = 128;
 
 /// POST /run — accept one run report. Fire-and-forget: 202 means
 /// queued for the mapper thread, not yet fsynced.
-pub async fn record(door: Door, body: web::Json<NewRun>) -> HttpResponse {
+///
+/// Handler parameters are actix-web "extractors": declared by type,
+/// built by the framework before the body runs. `web::Json<NewRun>`
+/// deserializes the request body — malformed JSON is rejected with
+/// a 400 before this function is ever called. `Mapper` is the
+/// shared state `main` registered with `.app_data()`; actix clones
+/// it in per call. Handlers return an `HttpResponse` directly:
+/// every outcome, including failure, is a response.
+pub async fn record(mapper: Mapper, body: web::Json<NewRun>) -> HttpResponse {
     let run = body.into_inner();
     if run.kind.is_empty()
         || run.kind.len() > MAX_KIND_LEN
@@ -32,7 +40,7 @@ pub async fn record(door: Door, body: web::Json<NewRun>) -> HttpResponse {
     // After boot, errors are responses, never panics. The send can
     // only fail if the mapper thread is gone; that's a 500, and the
     // process stays up to say so.
-    match door.send(Command::Record(run)) {
+    match mapper.send(Command::Record(run)) {
         Ok(()) => HttpResponse::Accepted().finish(),
         Err(_) => HttpResponse::InternalServerError().finish(),
     }
@@ -40,13 +48,22 @@ pub async fn record(door: Door, body: web::Json<NewRun>) -> HttpResponse {
 
 /// GET /run (and /run.json) — the report, as the negotiated
 /// representation.
-pub async fn run(req: HttpRequest, door: Door) -> HttpResponse {
+///
+/// Extractor parameters, as on `record`. `HttpRequest` is the
+/// whole-request extractor, used here to read the path and `Accept`
+/// header for content negotiation.
+pub async fn run(req: HttpRequest, mapper: Mapper) -> HttpResponse {
+    // `oneshot` is a channel for exactly one value, used exactly
+    // once: `reply` is consumed by its `send`, `rx` by its `await`.
+    // A fresh pair is made per request and dropped with it, so
+    // request/reply correlation needs no ids and no cleanup — the
+    // channel itself is the correlation.
     let (reply, rx) = oneshot::channel();
     let cmd = Command::Report {
         days: REPORT_DAYS,
         reply,
     };
-    if door.send(cmd).is_err() {
+    if mapper.send(cmd).is_err() {
         return HttpResponse::InternalServerError().finish();
     }
     let report = match rx.await {
@@ -77,7 +94,14 @@ pub async fn index() -> HttpResponse {
         .finish()
 }
 
-/// GET /healthz — liveness. Answering at all is the answer.
+/// GET /healthz — liveness probe. The path follows the "z-pages"
+/// convention from Google's internal services (`/healthz`, `/varz`),
+/// spread industry-wide by Kubernetes; the trailing `z` avoids
+/// colliding with a real application resource named `health`. A de
+/// facto standard, not an RFC. Liveness needs no body and no state:
+/// a 204 proves the process is up and serving, which is the whole
+/// question. Readiness ("should traffic come here?") is a separate
+/// probe this service is simple enough not to need.
 pub async fn healthz() -> HttpResponse {
     HttpResponse::NoContent().finish()
 }
@@ -91,7 +115,7 @@ const STYLE: &str = include_str!("../assets/style.css");
 /// Minimal HTML escaping. Every client-supplied string goes through
 /// here before it lands in markup — non-negotiable, even on a
 /// trusted network.
-fn esc(s: &str) -> String {
+fn escape_html(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -108,7 +132,7 @@ fn render(report: &Report) -> String {
             "<tr><td>{}</td><td>{}</td><td class=n>{}</td>\
              <td class=n>{}</td><td class=n>{}</td></tr>\n",
             d.day,
-            esc(&d.kind),
+            escape_html(&d.kind),
             d.runs,
             d.failed,
             secs(d.avg_ms),
@@ -120,10 +144,10 @@ fn render(report: &Report) -> String {
             "<tr><td>{}</td><td>{}</td><td>{}</td>\
              <td class=n>{}</td><td>{}</td></tr>\n",
             r.received,
-            esc(&r.kind),
-            esc(&r.host),
+            escape_html(&r.kind),
+            escape_html(&r.host),
             secs(r.duration_ms),
-            esc(&r.detail.to_string()),
+            escape_html(&r.detail.to_string()),
         ));
     }
     PAGE.replace("{{style}}", STYLE)

@@ -9,8 +9,12 @@ pub struct Config {
 }
 
 impl Config {
-    /// Read configuration from the environment, with defaults that
-    /// work for local development. Call once at startup.
+    /// Read configuration from the environment. Call once at
+    /// startup.
+    ///
+    /// Returns a fully populated `Config`: any variable that is
+    /// unset falls back to a default that works for local
+    /// development. Loading cannot fail, so there is no `Result`.
     pub fn load() -> Self {
         // `unwrap_or_else` takes a closure, so the default String is
         // only built when the variable is missing; `unwrap_or` would

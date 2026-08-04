@@ -15,12 +15,12 @@ use actix_web::{App, HttpServer, web};
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let config = config::Config::load();
-    let door = mapper::spawn(&config.db_path);
+    let mapper = mapper::spawn(&config.db_path);
     println!("tally listening on {}", config.bind_addr);
     let bind = config.bind_addr.clone();
     HttpServer::new(move || {
         App::new()
-            .app_data(web::Data::new(door.clone()))
+            .app_data(web::Data::new(mapper.clone()))
             .route("/run", web::post().to(route::record))
             .route("/run", web::get().to(route::run))
             .route("/run.json", web::get().to(route::run))

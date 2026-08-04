@@ -12,6 +12,13 @@ pub enum Format {
 impl Format {
     /// Resolve the requested format from a request path and optional
     /// `Accept` header value.
+    ///
+    /// Parameters
+    /// - `path`: the request path; a trailing `.json` wins outright.
+    /// - `accept`: the request's `Accept` header value, if present.
+    ///
+    /// Returns the representation to serve — HTML unless something
+    /// asked for JSON.
     pub fn negotiate(path: &str, accept: Option<&str>) -> Format {
         if path.ends_with(".json") {
             return Format::Json;
