@@ -1,6 +1,6 @@
 //! Tally — a thin receiver for build and test stats.
 //!
-//! One binary: JSON POSTs in, SQLite underneath, a server-rendered
+//! One binary: JSON POSTs in, `SQLite` underneath, a server-rendered
 //! trends page out. The mapper thread is the only door to the
 //! database.
 

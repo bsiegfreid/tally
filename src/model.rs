@@ -9,7 +9,13 @@ use serde::{Deserialize, Serialize};
 pub struct NewRun {
     pub kind: String,
     pub host: String,
-    pub duration_ms: u64,
+    /// `u32` on purpose: ~49 days of milliseconds is more than any
+    /// run needs, and the conversion into `SQLite`'s `i64` is
+    /// lossless. Prefer tightening a type over guarding a cast —
+    /// `i64::from(u32)` cannot fail, so nothing needs checking.
+    pub duration_ms: u32,
+    /// `#[serde(default)]` makes the field optional on the wire; an
+    /// absent `detail` arrives as `Value::Null` instead of a 400.
     #[serde(default)]
     pub detail: serde_json::Value,
 }

@@ -29,6 +29,9 @@ pub async fn record(door: Door, body: web::Json<NewRun>) -> HttpResponse {
     {
         return HttpResponse::BadRequest().body("kind and host are required");
     }
+    // After boot, errors are responses, never panics. The send can
+    // only fail if the mapper thread is gone; that's a 500, and the
+    // process stays up to say so.
     match door.send(Command::Record(run)) {
         Ok(()) => HttpResponse::Accepted().finish(),
         Err(_) => HttpResponse::InternalServerError().finish(),
@@ -85,6 +88,9 @@ pub async fn healthz() -> HttpResponse {
 const PAGE: &str = include_str!("../assets/page.html");
 const STYLE: &str = include_str!("../assets/style.css");
 
+/// Minimal HTML escaping. Every client-supplied string goes through
+/// here before it lands in markup — non-negotiable, even on a
+/// trusted network.
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")

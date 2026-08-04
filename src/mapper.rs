@@ -1,4 +1,4 @@
-//! The only door to the database. One thread owns the sole SQLite
+//! The only door to the database. One thread owns the sole `SQLite`
 //! connection and drains commands from a channel; handlers never
 //! touch the file. Writes are fire-and-forget, reads reply on a
 //! oneshot channel.
@@ -38,10 +38,23 @@ pub enum Command {
 /// dedicated thread. The returned sender is the door. Panics if the
 /// database cannot be opened — there is nothing to serve without it.
 pub fn spawn(db_path: &str) -> mpsc::UnboundedSender<Command> {
+    // Deliberate panic, and the only two in the binary. `expect` is
+    // acceptable here because this runs at startup, before the
+    // listener binds: better to die with a clear message than to
+    // serve without a database. The rule this example teaches: after
+    // the first request is accepted, a failure becomes a response or
+    // a log line — never a panic.
     let conn = Connection::open(db_path).expect("open database");
     conn.execute_batch(SCHEMA).expect("apply schema");
+    // The thread takes ownership of the Connection (`move`), so no
+    // Mutex is ever needed: instead of many threads sharing the
+    // handle, one thread owns it and the others send messages. This
+    // is Rust's ownership model used as a concurrency design.
     let (tx, mut rx) = mpsc::unbounded_channel();
     std::thread::spawn(move || {
+        // A plain OS thread drains the async channel with
+        // `blocking_recv`, while handlers `.await` their replies —
+        // the bridge between the sync and async worlds.
         while let Some(cmd) = rx.blocking_recv() {
             match cmd {
                 Command::Record(run) => {
@@ -50,6 +63,11 @@ pub fn spawn(db_path: &str) -> mpsc::UnboundedSender<Command> {
                     }
                 }
                 Command::Report { days, reply } => {
+                    // `let _ =` discards the send error on purpose:
+                    // it only fails when the requester has already
+                    // dropped its receiver and no longer wants the
+                    // answer. Deliberate discards are spelled
+                    // `let _ =`, never `.unwrap()`.
                     let _ = reply.send(report(&conn, days));
                 }
             }
@@ -65,7 +83,7 @@ fn record(conn: &Connection, run: &NewRun) -> rusqlite::Result<()> {
         params![
             run.kind,
             run.host,
-            run.duration_ms as i64,
+            i64::from(run.duration_ms),
             run.detail.to_string(),
         ],
     )?;
@@ -84,6 +102,9 @@ fn report(conn: &Connection, days: u32) -> rusqlite::Result<Report> {
          GROUP BY day, kind
          ORDER BY day DESC, kind",
     )?;
+    // An iterator of `Result` rows collects into a single
+    // `Result<Vec<_>>`: the first `Err` stops the loop and becomes
+    // the function's return value, so `?` is paid once, not per row.
     let daily = stmt
         .query_map([days], |row| {
             Ok(Daily {
@@ -102,6 +123,8 @@ fn report(conn: &Connection, days: u32) -> rusqlite::Result<Report> {
     )?;
     let recent = stmt
         .query_map([RECENT_LIMIT], |row| {
+            // Reads degrade instead of panicking: a corrupt detail
+            // blob becomes JSON null, not a dead page.
             let detail: String = row.get(4)?;
             Ok(RunRow {
                 received: row.get(0)?,
