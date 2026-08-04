@@ -8,6 +8,9 @@ JavaScript, five short modules — the whole shape holds in one head.
 Tally serves without TLS or authentication by design; run it inside a
 trusted network boundary, or put a proxy in front if it must face one.
 
+![The Tally trends page: daily aggregates and recent
+runs](docs/tally.png)
+
 ## API
 
 One resource, `/run`. `POST /run` reports a run; `GET /run` is the
