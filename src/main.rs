@@ -18,6 +18,17 @@ async fn main() -> std::io::Result<()> {
     let mapper = mapper::spawn(&config.db_path);
     println!("tally listening on {}", config.bind_addr);
     let bind = config.bind_addr.clone();
+    // The factory closure runs once per worker thread; `move` gives
+    // it ownership of `mapper`, and each worker's App gets a clone
+    // of the sender (a refcount bump, not a copy — many producers is
+    // mpsc's point). `web::Data` is an `Arc` that `app_data` files
+    // in the App's type map, keyed by type: a handler declaring a
+    // `Data<T>` parameter receives the value registered under that
+    // exact `T`. One value per type, so distinct dependencies get
+    // distinct types. Gotcha: this wiring is checked at runtime, not
+    // compile time — remove this line and handlers still compile,
+    // then 500 on every request. The first thing to check when a
+    // handler mysteriously 500s is the type map.
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(mapper.clone()))
