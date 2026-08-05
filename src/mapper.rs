@@ -100,8 +100,8 @@ pub fn spawn(db_path: &str) -> mpsc::UnboundedSender<Command> {
         while let Some(cmd) = rx.blocking_recv() {
             match cmd {
                 Command::Record(run) => {
-                    if let Err(e) = record(&conn, &run) {
-                        tracing::error!(error = %e, "record failed");
+                    if let Err(error) = record(&conn, &run) {
+                        tracing::error!(%error, "record failed");
                     }
                 }
                 Command::Report { days, reply } => {

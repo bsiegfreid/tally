@@ -65,7 +65,8 @@ async fn main() -> std::io::Result<()> {
         .route("/healthz", get(route::healthz))
         .layer(TraceLayer::new_for_http())
         .with_state(mapper);
-    tracing::info!(addr = %config.bind_addr, "tally listening");
-    let listener = tokio::net::TcpListener::bind(&config.bind_addr).await?;
+    let addr = &config.bind_addr;
+    tracing::info!(%addr, "tally listening");
+    let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await
 }
