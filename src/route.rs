@@ -3,15 +3,16 @@
 //! the page refreshes itself with a meta tag and stays fully
 //! self-contained.
 
-use actix_web::http::header;
-use actix_web::{HttpRequest, HttpResponse, web};
+use axum::extract::{Json, State};
+use axum::http::{HeaderMap, StatusCode, Uri, header};
+use axum::response::{IntoResponse, Redirect, Response};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::format::Format;
 use crate::mapper::Command;
 use crate::model::{NewRun, Report};
 
-type Mapper = web::Data<mpsc::UnboundedSender<Command>>;
+type Mapper = State<mpsc::UnboundedSender<Command>>;
 
 /// Window shown by the daily trends table.
 const REPORT_DAYS: u32 = 14;
@@ -21,38 +22,37 @@ const MAX_HOST_LEN: usize = 128;
 /// POST /run — accept one run report. Fire-and-forget: 202 means
 /// queued for the mapper thread, not yet fsynced.
 ///
-/// Handler parameters are actix-web "extractors": declared by type,
-/// built by the framework before the body runs. `web::Json<NewRun>`
-/// deserializes the request body — malformed JSON is rejected with
-/// a 400 before this function is ever called. `Mapper` is the
-/// shared state `main` registered with `.app_data()`; actix clones
-/// it in per call. Handlers return an `HttpResponse` directly:
-/// every outcome, including failure, is a response.
-pub async fn record(mapper: Mapper, body: web::Json<NewRun>) -> HttpResponse {
-    let run = body.into_inner();
+/// Handler parameters are axum "extractors": declared by type, run
+/// by the framework before the body. `Json<NewRun>` deserializes
+/// the request body — malformed JSON is rejected before this
+/// function is ever called. `State` is the value the Router was
+/// given in `main` with `.with_state()`; the pattern `State(mapper)`
+/// destructures the wrapper on the way in. Handlers return anything
+/// implementing `IntoResponse`: every outcome, including failure,
+/// is a response.
+pub async fn record(State(mapper): Mapper, Json(run): Json<NewRun>) -> Response {
     if run.kind.is_empty()
         || run.kind.len() > MAX_KIND_LEN
         || run.host.is_empty()
         || run.host.len() > MAX_HOST_LEN
     {
-        return HttpResponse::BadRequest().body("kind and host are required");
+        return (StatusCode::BAD_REQUEST, "kind and host are required").into_response();
     }
     // After boot, errors are responses, never panics. The send can
     // only fail if the mapper thread is gone; that's a 500, and the
     // process stays up to say so.
     match mapper.send(Command::Record(run)) {
-        Ok(()) => HttpResponse::Accepted().finish(),
-        Err(_) => HttpResponse::InternalServerError().finish(),
+        Ok(()) => StatusCode::ACCEPTED.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
 /// GET /run (and /run.json) — the report, as the negotiated
 /// representation.
 ///
-/// Extractor parameters, as on `record`. `HttpRequest` is the
-/// whole-request extractor, used here to read the path and `Accept`
-/// header for content negotiation.
-pub async fn run(req: HttpRequest, mapper: Mapper) -> HttpResponse {
+/// Extractor parameters, as on `record`. `Uri` and `HeaderMap` give
+/// the request path and headers for content negotiation.
+pub async fn run(uri: Uri, headers: HeaderMap, State(mapper): Mapper) -> Response {
     // `oneshot` is a channel for exactly one value, used exactly
     // once: `reply` is consumed by its `send`, `rx` by its `await`.
     // A fresh pair is made per request and dropped with it, so
@@ -64,34 +64,27 @@ pub async fn run(req: HttpRequest, mapper: Mapper) -> HttpResponse {
         reply,
     };
     if mapper.send(cmd).is_err() {
-        return HttpResponse::InternalServerError().finish();
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let report = match rx.await {
         Ok(Ok(report)) => report,
-        _ => return HttpResponse::InternalServerError().finish(),
+        _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    let accept = req
-        .headers()
-        .get(header::ACCEPT)
-        .and_then(|v| v.to_str().ok());
-    let format = Format::negotiate(req.path(), accept);
+    let accept = headers.get(header::ACCEPT).and_then(|v| v.to_str().ok());
+    let format = Format::negotiate(uri.path(), accept);
     let body = match format {
         Format::Json => match serde_json::to_string(&report) {
             Ok(json) => json,
-            Err(_) => return HttpResponse::InternalServerError().finish(),
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         },
         Format::Html => render(&report),
     };
-    HttpResponse::Ok()
-        .content_type(format.content_type())
-        .body(body)
+    ([(header::CONTENT_TYPE, format.content_type())], body).into_response()
 }
 
 /// GET / — the resource lives at /run; send the browser there.
-pub async fn index() -> HttpResponse {
-    HttpResponse::Found()
-        .insert_header((header::LOCATION, "/run"))
-        .finish()
+pub async fn index() -> Redirect {
+    Redirect::to("/run")
 }
 
 /// GET /healthz — liveness probe. The path follows the "z-pages"
@@ -102,8 +95,8 @@ pub async fn index() -> HttpResponse {
 /// a 204 proves the process is up and serving, which is the whole
 /// question. Readiness ("should traffic come here?") is a separate
 /// probe this service is simple enough not to need.
-pub async fn healthz() -> HttpResponse {
-    HttpResponse::NoContent().finish()
+pub async fn healthz() -> StatusCode {
+    StatusCode::NO_CONTENT
 }
 
 /// Page shell and stylesheet, authored as plain files in `assets/`
