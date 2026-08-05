@@ -101,7 +101,7 @@ pub fn spawn(db_path: &str) -> mpsc::UnboundedSender<Command> {
             match cmd {
                 Command::Record(run) => {
                     if let Err(e) = record(&conn, &run) {
-                        eprintln!("record failed: {e}");
+                        tracing::error!(error = %e, "record failed");
                     }
                 }
                 Command::Report { days, reply } => {

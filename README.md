@@ -88,6 +88,14 @@ cargo run                       # local, tally.sqlite in the cwd
 cargo test                      # mapper tests, in-memory database
 ```
 
+Logging uses `tracing`, filtered by the conventional `RUST_LOG`
+variable; the default is `tally=info,tower_http=info`. Per-request
+spans (method, path, status, latency) appear with:
+
+```sh
+RUST_LOG=tower_http=debug cargo run
+```
+
 Container (Apple `container` locally; the commands are
 Docker-compatible, so `docker` works the same on the server):
 
